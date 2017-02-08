@@ -32,6 +32,7 @@
 #include "Platform.h"
 
 extern char retro_base_directory[4096];
+extern char retro_game_path[4096];
 
 namespace NDS
 {
@@ -347,29 +348,11 @@ void Reset()
     Wifi::Reset();
 }
 
-void Stop()
-{
-    printf("Stopping: shutdown\n");
-    Running = false;
-    Platform::StopEmu();
-    GPU::Stop();
-    SPU::Stop();
-}
-
-void LoadROM(const char* path, bool direct)
-{
-    Reset();
-
-    if (NDSCart::LoadROM(path, direct))
-        Running = true;
-    else
-        printf("Failed to load ROM %s\n", path);
-}
-
-void LoadBIOS()
-{
-    Reset();
-    Running = true;
+    // test
+    //LoadROM();
+    //LoadFirmware();
+    if (NDSCart::LoadROM(retro_game_path))
+        Running = true; // hax
 }
 
 
