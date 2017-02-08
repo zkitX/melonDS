@@ -22,6 +22,7 @@
 #include "NDS.h"
 #include "SPI.h"
 
+extern char retro_base_directory[4096];
 
 namespace SPI_Firmware
 {
@@ -39,6 +40,8 @@ u8 Data;
 
 u8 StatusReg;
 u32 Addr;
+
+
 
 
 u16 CRC16(u8* data, u32 len, u32 start)
@@ -88,7 +91,9 @@ void Reset()
     if (Firmware) delete[] Firmware;
     Firmware = NULL;
 
-    FILE* f = fopen("firmware.bin", "rb");
+    char path[2047];
+    snprintf(path, sizeof(path), "%s/firmware.bin", retro_base_directory);
+    FILE* f = fopen(path, "rb");
     if (!f)
     {
         printf("firmware.bin not found\n");

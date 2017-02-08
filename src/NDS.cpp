@@ -31,6 +31,7 @@
 #include "Wifi.h"
 #include "Platform.h"
 
+extern char retro_base_directory[4096];
 
 namespace NDS
 {
@@ -244,7 +245,9 @@ void Reset()
     FILE* f;
     u32 i;
 
-    f = fopen("bios9.bin", "rb");
+    char path[2048];
+    snprintf(path, sizeof(path), "%s/bios9.bin", retro_base_directory);
+    f = fopen(path, "rb");
     if (!f)
     {
         printf("ARM9 BIOS not found\n");
@@ -261,7 +264,8 @@ void Reset()
         fclose(f);
     }
 
-    f = fopen("bios7.bin", "rb");
+    snprintf(path, sizeof(path), "%s/bios7.bin", retro_base_directory);
+    f = fopen(path, "rb");
     if (!f)
     {
         printf("ARM7 BIOS not found\n");
