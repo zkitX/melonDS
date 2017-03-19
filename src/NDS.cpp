@@ -362,6 +362,7 @@ void Reset()
     Wifi::Reset();
 }
 
+<<<<<<< HEAD
     // test
     //LoadROM();
     //LoadFirmware();
@@ -372,6 +373,14 @@ void Reset()
     if (NDSCart::LoadROM("rom/nsmb.nds"))
         Running = true; // hax
 #endif
+=======
+void LoadROM(const char* path, bool direct)
+{
+    Reset();
+
+    if (NDSCart::LoadROM(path, direct))
+        Running = true;
+>>>>>>> 4c0ef67... start rebasing
 }
 
 
