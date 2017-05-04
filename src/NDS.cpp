@@ -256,16 +256,7 @@ void Reset()
     f = fopen("bios9.bin", "rb");
 #endif
     if (!f)
-<<<<<<< HEAD:src/NDS.cpp
-    {
         printf("ARM9 BIOS not found\n");
-
-        for (i = 0; i < 16; i++)
-            ((u32*)ARM9BIOS)[i] = 0xE7FFDEFF;
-    }
-=======
-        printf("ARM9 BIOS not found\n");
->>>>>>> 812c72c... let this be like it was for standalone:NDS.cpp
     else
     {
         fseek(f, 0, SEEK_SET);
@@ -362,25 +353,12 @@ void Reset()
     Wifi::Reset();
 }
 
-<<<<<<< HEAD
-    // test
-    //LoadROM();
-    //LoadFirmware();
-#ifdef __LIBRETRO__
-    if (NDSCart::LoadROM(retro_game_path))
-        Running = true; // hax
-#else 
-    if (NDSCart::LoadROM("rom/nsmb.nds"))
-        Running = true; // hax
-#endif
-=======
 void LoadROM(const char* path, bool direct)
 {
     Reset();
 
     if (NDSCart::LoadROM(path, direct))
         Running = true;
->>>>>>> 4c0ef67... start rebasing
 }
 
 
