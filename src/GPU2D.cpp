@@ -1313,7 +1313,7 @@ void GPU2D::DrawBG_Text(u32 line, u32* dst, u32 bgnum)
         tilemapaddr += ((yoff & 0xF8) << 3);
 
     u16 curtile;
-    u16* curpal;
+    u16* curpal = nullptr;
     u32 pixelsaddr;
     u8 color;
 
