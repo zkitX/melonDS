@@ -269,7 +269,12 @@ void Reset()
     f = fopen("bios9.bin", "rb");
 #endif
     if (!f)
+    {
         printf("ARM9 BIOS not found\n");
+
+        for (i = 0; i < 16; i++)
+            ((u32*)ARM9BIOS)[i] = 0xE7FFDEFF;
+    }
     else
     {
         fseek(f, 0, SEEK_SET);
@@ -370,12 +375,29 @@ void Reset()
     Wifi::Reset();
 }
 
+void Stop()
+{
+    printf("Stopping: shutdown\n");
+    Running = false;
+    Platform::StopEmu();
+    GPU::Stop();
+    SPU::Stop();
+}
+
 void LoadROM(const char* path, bool direct)
 {
     Reset();
 
     if (NDSCart::LoadROM(path, direct))
         Running = true;
+    else
+        printf("Failed to load ROM %s\n", path);
+}
+
+void LoadBIOS()
+{
+    Reset();
+    Running = true;
 }
 
 
