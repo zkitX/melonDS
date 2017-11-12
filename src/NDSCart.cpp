@@ -22,9 +22,6 @@
 #include "NDSCart.h"
 #include "ARM.h"
 
-#ifdef __LIBRETRO__
-#include <streams/file_stream_transforms.h>
-#endif
 #include "melon_fopen.h"
 
 
