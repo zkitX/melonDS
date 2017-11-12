@@ -37,7 +37,10 @@
 #include "../Platform.h"
 
 
-const int kScreenGap[] = {0, 1, 8, 64, 90, 128};
+const int kScreenRot[4] = {0, 1, 2, 3};
+const int kScreenGap[6] = {0, 1, 8, 64, 90, 128};
+const int kScreenLayout[3] = {0, 1, 2};
+const int kScreenSizing[4] = {0, 1, 2, 3};
 
 
 uiWindow* MainWindow;
@@ -46,6 +49,11 @@ uiArea* MainDrawArea;
 uiMenuItem* MenuItem_Pause;
 uiMenuItem* MenuItem_Reset;
 uiMenuItem* MenuItem_Stop;
+
+uiMenuItem* MenuItem_ScreenRot[4];
+uiMenuItem* MenuItem_ScreenGap[6];
+uiMenuItem* MenuItem_ScreenLayout[3];
+uiMenuItem* MenuItem_ScreenSizing[4];
 
 SDL_Thread* EmuThread;
 int EmuRunning;
@@ -58,8 +66,18 @@ bool ScreenDrawInited = false;
 uiDrawBitmap* ScreenBitmap = NULL;
 u32 ScreenBuffer[256*384];
 
+int ScreenGap = 0;
+int ScreenLayout = 0;
+int ScreenSizing = 0;
+int ScreenRotation = 0;
+
+int MainScreenPos[3];
+int AutoScreenSizing;
+
 uiRect TopScreenRect;
 uiRect BottomScreenRect;
+uiDrawMatrix TopScreenTrans;
+uiDrawMatrix BottomScreenTrans;
 
 bool Touching = false;
 
@@ -67,6 +85,14 @@ u32 KeyInputMask;
 SDL_Joystick* Joystick;
 
 
+void SetupScreenRects(int width, int height);
+
+
+
+void UpdateWindowTitle(void* data)
+{
+    uiWindowSetTitle(MainWindow, (const char*)data);
+}
 
 void AudioCallback(void* data, Uint8* stream, int len)
 {
@@ -76,6 +102,11 @@ void AudioCallback(void* data, Uint8* stream, int len)
 int EmuThreadFunc(void* burp)
 {
     NDS::Init();
+
+    MainScreenPos[0] = 0;
+    MainScreenPos[1] = 0;
+    MainScreenPos[2] = 0;
+    AutoScreenSizing = 0;
 
     ScreenDrawInited = false;
     Touching = false;
@@ -117,6 +148,7 @@ int EmuThreadFunc(void* burp)
     u32 lastmeasuretick = lasttick;
     u32 fpslimitcount = 0;
     bool limitfps = true;
+    char melontitle[100];
 
     while (EmuRunning != 0)
     {
@@ -162,6 +194,35 @@ int EmuThreadFunc(void* burp)
 
             if (EmuRunning == 0) break;
 
+            // auto screen layout
+            {
+                MainScreenPos[2] = MainScreenPos[1];
+                MainScreenPos[1] = MainScreenPos[0];
+                MainScreenPos[0] = NDS::PowerControl9 >> 15;
+
+                int guess;
+                if (MainScreenPos[0] == MainScreenPos[2] &&
+                    MainScreenPos[0] != MainScreenPos[1])
+                {
+                    // constant flickering, likely displaying 3D on both screens
+                    // TODO: when both screens are used for 2D only...???
+                    guess = 0;
+                }
+                else
+                {
+                    if (MainScreenPos[0] == 1)
+                        guess = 1;
+                    else
+                        guess = 2;
+                }
+
+                if (guess != AutoScreenSizing)
+                {
+                    AutoScreenSizing = guess;
+                    SetupScreenRects(Config::WindowWidth, Config::WindowHeight);
+                }
+            }
+
             memcpy(ScreenBuffer, GPU::Framebuffer, 256*384*4);
             uiAreaQueueRedrawAll(MainDrawArea);
 
@@ -200,9 +261,8 @@ int EmuThreadFunc(void* burp)
                 if (framerate < 1) fpstarget = 999;
                 else fpstarget = 1000.0f/framerate;
 
-                char melontitle[100];
-                sprintf(melontitle, "%d/%.0f FPS | melonDS " MELONDS_VERSION, fps, fpstarget);
-                //uiWindowSetTitle(MainWindow, melontitle);
+                sprintf(melontitle, "[%d/%.0f] melonDS " MELONDS_VERSION, fps, fpstarget);
+                uiQueueMain(UpdateWindowTitle, melontitle);
             }
         }
         else
@@ -248,8 +308,22 @@ void OnAreaDraw(uiAreaHandler* handler, uiArea* area, uiAreaDrawParams* params)
 
     uiDrawBitmapUpdate(ScreenBitmap, ScreenBuffer);
 
+    uiDrawSave(params->Context);
+    uiDrawTransform(params->Context, &TopScreenTrans);
     uiDrawBitmapDraw(params->Context, ScreenBitmap, &top, &TopScreenRect);
+    uiDrawRestore(params->Context);
+
+    /*uiDrawMatrix blirg;
+    uiDrawMatrixSetIdentity(&blirg);
+    uiDrawMatrixTranslate(&blirg, -BottomScreenRect.X, -BottomScreenRect.Y);
+    uiDrawMatrixRotate(&blirg, 0, 0, -M_PI/2.0f);//3.14);
+    uiDrawMatrixTranslate(&blirg, BottomScreenRect.X, BottomScreenRect.Y+BottomScreenRect.Height);
+    //uiDrawMatrixScale(&blirg, 128, 192, 2, 2);
+    uiDrawTransform(params->Context, &blirg);*/
+    uiDrawSave(params->Context);
+    uiDrawTransform(params->Context, &BottomScreenTrans);
     uiDrawBitmapDraw(params->Context, ScreenBitmap, &bot, &BottomScreenRect);
+    uiDrawRestore(params->Context);
 }
 
 void OnAreaMouseEvent(uiAreaHandler* handler, uiArea* area, uiAreaMouseEvent* evt)
@@ -276,10 +350,39 @@ void OnAreaMouseEvent(uiAreaHandler* handler, uiArea* area, uiAreaMouseEvent* ev
         x -= BottomScreenRect.X;
         y -= BottomScreenRect.Y;
 
-        if (BottomScreenRect.Width != 256)
-            x = (x * 256) / BottomScreenRect.Width;
-        if (BottomScreenRect.Height != 192)
-            y = (y * 192) / BottomScreenRect.Height;
+        if (ScreenRotation == 0 || ScreenRotation == 2)
+        {
+            if (BottomScreenRect.Width != 256)
+                x = (x * 256) / BottomScreenRect.Width;
+            if (BottomScreenRect.Height != 192)
+                y = (y * 192) / BottomScreenRect.Height;
+
+            if (ScreenRotation == 2)
+            {
+                x = 255 - x;
+                y = 191 - y;
+            }
+        }
+        else
+        {
+            if (BottomScreenRect.Width != 192)
+                x = (x * 192) / BottomScreenRect.Width;
+            if (BottomScreenRect.Height != 256)
+                y = (y * 256) / BottomScreenRect.Height;
+
+            if (ScreenRotation == 1)
+            {
+                int tmp = x;
+                x = y;
+                y = 191 - tmp;
+            }
+            else
+            {
+                int tmp = x;
+                x = 255 - y;
+                y = tmp;
+            }
+        }
 
         // clamp
         if (x < 0) x = 0;
@@ -324,45 +427,230 @@ int OnAreaKeyEvent(uiAreaHandler* handler, uiArea* area, uiAreaKeyEvent* evt)
     return 1;
 }
 
-void OnAreaResize(uiAreaHandler* handler, uiArea* area, int width, int height)
+void SetupScreenRects(int width, int height)
 {
-    float ratio = (height/2) / (float)width;
+    bool horizontal = false;
+    bool sideways = false;
 
-    if (ratio <= 0.75)
+    if (ScreenRotation == 1 || ScreenRotation == 3)
+        sideways = true;
+
+    if (ScreenLayout == 2) horizontal = true;
+    else if (ScreenLayout == 0)
     {
-        // bars on the sides
+        if (sideways)
+            horizontal = true;
+    }
 
-        int targetW = (height * 256) / 384;
-        int barW = (width - targetW) / 2;
+    int sizemode;
+    if (ScreenSizing == 3)
+        sizemode = AutoScreenSizing;
+    else
+        sizemode = ScreenSizing;
 
-        TopScreenRect.X = barW;
-        TopScreenRect.Width = targetW;
-        TopScreenRect.Y = 0;
-        TopScreenRect.Height = height / 2;
-
-        BottomScreenRect.X = barW;
-        BottomScreenRect.Width = targetW;
-        BottomScreenRect.Y = height / 2;
-        BottomScreenRect.Height = height / 2;
+    int screenW, screenH;
+    if (sideways)
+    {
+        screenW = 192;
+        screenH = 256;
     }
     else
     {
-        // TODO: this should do bars on the top, and fixed screen gap
-        // for now we'll adjust the screen gap in consequence
-
-        int targetH = (width * 384) / 256;
-        int gap = height - targetH;
-
-        TopScreenRect.X = 0;
-        TopScreenRect.Width = width;
-        TopScreenRect.Y = 0;
-        TopScreenRect.Height = targetH / 2;
-
-        BottomScreenRect.X = 0;
-        BottomScreenRect.Width = width;
-        BottomScreenRect.Y = (targetH / 2) + gap;
-        BottomScreenRect.Height = targetH / 2;
+        screenW = 256;
+        screenH = 192;
     }
+
+    uiRect *topscreen, *bottomscreen;
+    if (ScreenRotation == 1 || ScreenRotation == 2)
+    {
+        topscreen = &BottomScreenRect;
+        bottomscreen = &TopScreenRect;
+    }
+    else
+    {
+        topscreen = &TopScreenRect;
+        bottomscreen = &BottomScreenRect;
+    }
+
+    if (horizontal)
+    {
+        // side-by-side
+
+        int heightreq;
+        int startX = 0;
+
+        width -= ScreenGap;
+
+        if (sizemode == 0) // even
+        {
+            heightreq = (width * screenH) / (screenW*2);
+            if (heightreq > height)
+            {
+                int newwidth = (height * width) / heightreq;
+                startX = (width - newwidth) / 2;
+                heightreq = height;
+                width = newwidth;
+            }
+        }
+        else // emph. top/bottom
+        {
+            heightreq = ((width - screenW) * screenH) / screenW;
+            if (heightreq > height)
+            {
+                int newwidth = ((height * (width - screenW)) / heightreq) + screenW;
+                startX = (width - newwidth) / 2;
+                heightreq = height;
+                width = newwidth;
+            }
+        }
+
+        if (sizemode == 2)
+        {
+            topscreen->Width = screenW;
+            topscreen->Height = screenH;
+        }
+        else
+        {
+            topscreen->Width = (sizemode==0) ? (width / 2) : (width - screenW);
+            topscreen->Height = heightreq;
+        }
+        topscreen->X = startX;
+        topscreen->Y = ((height - heightreq) / 2) + (heightreq - topscreen->Height);
+
+        bottomscreen->X = topscreen->X + topscreen->Width + ScreenGap;
+
+        if (sizemode == 1)
+        {
+            bottomscreen->Width = screenW;
+            bottomscreen->Height = screenH;
+        }
+        else
+        {
+            bottomscreen->Width = width - topscreen->Width;
+            bottomscreen->Height = heightreq;
+        }
+        bottomscreen->Y = ((height - heightreq) / 2) + (heightreq - bottomscreen->Height);
+    }
+    else
+    {
+        // top then bottom
+
+        int widthreq;
+        int startY = 0;
+
+        height -= ScreenGap;
+
+        if (sizemode == 0) // even
+        {
+            widthreq = (height * screenW) / (screenH*2);
+            if (widthreq > width)
+            {
+                int newheight = (width * height) / widthreq;
+                startY = (height - newheight) / 2;
+                widthreq = width;
+                height = newheight;
+            }
+        }
+        else // emph. top/bottom
+        {
+            widthreq = ((height - screenH) * screenW) / screenH;
+            if (widthreq > width)
+            {
+                int newheight = ((width * (height - screenH)) / widthreq) + screenH;
+                startY = (height - newheight) / 2;
+                widthreq = width;
+                height = newheight;
+            }
+        }
+
+        if (sizemode == 2)
+        {
+            topscreen->Width = screenW;
+            topscreen->Height = screenH;
+        }
+        else
+        {
+            topscreen->Width = widthreq;
+            topscreen->Height = (sizemode==0) ? (height / 2) : (height - screenH);
+        }
+        topscreen->Y = startY;
+        topscreen->X = (width - topscreen->Width) / 2;
+
+        bottomscreen->Y = topscreen->Y + topscreen->Height + ScreenGap;
+
+        if (sizemode == 1)
+        {
+            bottomscreen->Width = screenW;
+            bottomscreen->Height = screenH;
+        }
+        else
+        {
+            bottomscreen->Width = widthreq;
+            bottomscreen->Height = height - topscreen->Height;
+        }
+        bottomscreen->X = (width - bottomscreen->Width) / 2;
+    }
+
+    // setup matrices for potential rotation
+
+    uiDrawMatrixSetIdentity(&TopScreenTrans);
+    uiDrawMatrixSetIdentity(&BottomScreenTrans);
+
+    switch (ScreenRotation)
+    {
+    case 1: // 90°
+        {
+            uiDrawMatrixTranslate(&TopScreenTrans, -TopScreenRect.X, -TopScreenRect.Y);
+            uiDrawMatrixRotate(&TopScreenTrans, 0, 0, M_PI/2.0f);
+            uiDrawMatrixScale(&TopScreenTrans, 0, 0,
+                              TopScreenRect.Width/(double)TopScreenRect.Height,
+                              TopScreenRect.Height/(double)TopScreenRect.Width);
+            uiDrawMatrixTranslate(&TopScreenTrans, TopScreenRect.X+TopScreenRect.Width, TopScreenRect.Y);
+
+            uiDrawMatrixTranslate(&BottomScreenTrans, -BottomScreenRect.X, -BottomScreenRect.Y);
+            uiDrawMatrixRotate(&BottomScreenTrans, 0, 0, M_PI/2.0f);
+            uiDrawMatrixScale(&BottomScreenTrans, 0, 0,
+                              BottomScreenRect.Width/(double)BottomScreenRect.Height,
+                              BottomScreenRect.Height/(double)BottomScreenRect.Width);
+            uiDrawMatrixTranslate(&BottomScreenTrans, BottomScreenRect.X+BottomScreenRect.Width, BottomScreenRect.Y);
+        }
+        break;
+
+    case 2: // 180°
+        {
+            uiDrawMatrixTranslate(&TopScreenTrans, -TopScreenRect.X, -TopScreenRect.Y);
+            uiDrawMatrixRotate(&TopScreenTrans, 0, 0, M_PI);
+            uiDrawMatrixTranslate(&TopScreenTrans, TopScreenRect.X+TopScreenRect.Width, TopScreenRect.Y+TopScreenRect.Height);
+
+            uiDrawMatrixTranslate(&BottomScreenTrans, -BottomScreenRect.X, -BottomScreenRect.Y);
+            uiDrawMatrixRotate(&BottomScreenTrans, 0, 0, M_PI);
+            uiDrawMatrixTranslate(&BottomScreenTrans, BottomScreenRect.X+BottomScreenRect.Width, BottomScreenRect.Y+BottomScreenRect.Height);
+        }
+        break;
+
+    case 3: // 270°
+        {
+            uiDrawMatrixTranslate(&TopScreenTrans, -TopScreenRect.X, -TopScreenRect.Y);
+            uiDrawMatrixRotate(&TopScreenTrans, 0, 0, -M_PI/2.0f);
+            uiDrawMatrixScale(&TopScreenTrans, 0, 0,
+                              TopScreenRect.Width/(double)TopScreenRect.Height,
+                              TopScreenRect.Height/(double)TopScreenRect.Width);
+            uiDrawMatrixTranslate(&TopScreenTrans, TopScreenRect.X, TopScreenRect.Y+TopScreenRect.Height);
+
+            uiDrawMatrixTranslate(&BottomScreenTrans, -BottomScreenRect.X, -BottomScreenRect.Y);
+            uiDrawMatrixRotate(&BottomScreenTrans, 0, 0, -M_PI/2.0f);
+            uiDrawMatrixScale(&BottomScreenTrans, 0, 0,
+                              BottomScreenRect.Width/(double)BottomScreenRect.Height,
+                              BottomScreenRect.Height/(double)BottomScreenRect.Width);
+            uiDrawMatrixTranslate(&BottomScreenTrans, BottomScreenRect.X, BottomScreenRect.Y+BottomScreenRect.Height);
+        }
+        break;
+    }
+}
+
+void OnAreaResize(uiAreaHandler* handler, uiArea* area, int width, int height)
+{
+    SetupScreenRects(width, height);
 
     // TODO:
     // should those be the size of the uiArea, or the size of the window client area?
@@ -400,6 +688,27 @@ void Stop(bool internal)
     uiAreaQueueRedrawAll(MainDrawArea);
 }
 
+void TryLoadROM(char* file, int prevstatus)
+{
+    char oldpath[1024];
+    strncpy(oldpath, ROMPath, 1024);
+
+    strncpy(ROMPath, file, 1023);
+    ROMPath[1023] = '\0';
+
+    if (NDS::LoadROM(ROMPath, Config::DirectBoot))
+        Run();
+    else
+    {
+        uiMsgBoxError(MainWindow,
+                      "Failed to load the ROM",
+                      "Make sure the file can be accessed and isn't opened in another application.");
+
+        strncpy(ROMPath, oldpath, 1024);
+        EmuRunning = prevstatus;
+    }
+}
+
 
 int OnCloseWindow(uiWindow* window, void* blarg)
 {
@@ -410,6 +719,7 @@ int OnCloseWindow(uiWindow* window, void* blarg)
 void OnDropFile(uiWindow* window, char* file, void* blarg)
 {
     char* ext = &file[strlen(file)-3];
+    int prevstatus = EmuRunning;
 
     if (!strcasecmp(ext, "nds") || !strcasecmp(ext, "srl"))
     {
@@ -419,11 +729,7 @@ void OnDropFile(uiWindow* window, char* file, void* blarg)
             while (EmuStatus != 2);
         }
 
-        strncpy(ROMPath, file, 1023);
-        ROMPath[1023] = '\0';
-
-        NDS::LoadROM(ROMPath, Config::DirectBoot);
-        Run();
+        TryLoadROM(file, prevstatus);
     }
 }
 
@@ -456,14 +762,8 @@ void OnOpenFile(uiMenuItem* item, uiWindow* window, void* blarg)
         return;
     }
 
-    strncpy(ROMPath, file, 1023);
-    ROMPath[1023] = '\0';
+    TryLoadROM(file, prevstatus);
     uiFreeText(file);
-    // TODO: change libui to store strings in stack-allocated buffers?
-    // so we don't have to free it after use
-
-    NDS::LoadROM(ROMPath, Config::DirectBoot);
-    Run();
 }
 
 void OnRun(uiMenuItem* item, uiWindow* window, void* blarg)
@@ -528,6 +828,65 @@ void OnOpenInputConfig(uiMenuItem* item, uiWindow* window, void* blarg)
 }
 
 
+void OnSetScreenRotation(uiMenuItem* item, uiWindow* window, void* param)
+{
+    int rot = *(int*)param;
+
+    int oldrot = ScreenRotation;
+    ScreenRotation = rot;
+
+    // TODO: adjust window size
+    if (rot == 1 || rot == 3)
+        uiControlSetMinSize(uiControl(MainDrawArea), 384, 256);
+    else
+        uiControlSetMinSize(uiControl(MainDrawArea), 256, 384);
+
+    SetupScreenRects(Config::WindowWidth, Config::WindowHeight);
+
+    for (int i = 0; i < 4; i++)
+        uiMenuItemSetChecked(MenuItem_ScreenRot[i], i==ScreenRotation);
+}
+
+void OnSetScreenGap(uiMenuItem* item, uiWindow* window, void* param)
+{
+    int gap = *(int*)param;
+
+    int oldgap = ScreenGap;
+    ScreenGap = gap;
+
+    // resize window as needed
+    // TODO: adapt to horizontal modes
+    // TODO: always resize window? except if it's maximized
+    int w, h;
+    uiWindowContentSize(window, &w, &h);
+    {
+        h -= gap;
+        if (h < 384)
+        {
+            h = 384 + gap;
+            uiWindowSetContentSize(window, w, h);
+        }
+    }
+
+    SetupScreenRects(Config::WindowWidth, Config::WindowHeight);
+}
+
+void OnSetScreenLayout(uiMenuItem* item, uiWindow* window, void* param)
+{
+    int layout = *(int*)param;
+    ScreenLayout = layout;
+    // TODO trigger resize
+}
+
+void OnSetScreenSizing(uiMenuItem* item, uiWindow* window, void* param)
+{
+    int sizing = *(int*)param;
+    ScreenSizing = sizing;
+
+    SetupScreenRects(Config::WindowWidth, Config::WindowHeight);
+}
+
+
 void ApplyNewSettings()
 {
     if (!RunningSomething) return;
@@ -567,7 +926,11 @@ int main(int argc, char** argv)
     // http://stackoverflow.com/questions/14543333/joystick-wont-work-using-sdl
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
 
-    if (SDL_Init(SDL_INIT_EVERYTHING) < 0)
+    if (SDL_Init(SDL_INIT_HAPTIC) < 0)
+    {
+        printf("SDL couldn't init rumble\n");
+    }
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_JOYSTICK) < 0)
     {
         printf("SDL shat itself :(\n");
         return 1;
@@ -633,13 +996,61 @@ int main(int argc, char** argv)
     uiMenuItemOnClicked(menuitem, OnOpenEmuSettings, NULL);
     menuitem = uiMenuAppendItem(menu, "Input config");
     uiMenuItemOnClicked(menuitem, OnOpenInputConfig, NULL);
-    /*uiMenuAppendSeparator();
-    menuitem = uiMenuAppendItem(menu, "Mid-screen gap");
+    uiMenuAppendSeparator(menu);
     {
-        uiMenuItem* parent = menuitem;
-        //menuitem = uiMenu
-        // TODO: need submenu support in libui.
-    }*/
+        uiMenu* submenu = uiNewMenu("Screen rotation");
+
+        for (int i = 0; i < 4; i++)
+        {
+            char name[32];
+            sprintf(name, "%d", kScreenRot[i]*90);
+            MenuItem_ScreenRot[i] = uiMenuAppendItem(submenu, name);
+            uiMenuItemOnClicked(MenuItem_ScreenRot[i], OnSetScreenRotation, (void*)&kScreenRot[i]);
+        }
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+    {
+        uiMenu* submenu = uiNewMenu("Mid-screen gap");
+
+        //for (int i = 0; kScreenGap[i] != -1; i++)
+        for (int i = 0; i < 6; i++)
+        {
+            char name[32];
+            sprintf(name, "%d pixels", kScreenGap[i]);
+            MenuItem_ScreenGap[i] = uiMenuAppendItem(submenu, name);
+            uiMenuItemOnClicked(MenuItem_ScreenGap[i], OnSetScreenGap, (void*)&kScreenGap[i]);
+        }
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+    {
+        uiMenu* submenu = uiNewMenu("Screen layout");
+
+        MenuItem_ScreenLayout[0] = uiMenuAppendItem(submenu, "Natural");
+        uiMenuItemOnClicked(MenuItem_ScreenLayout[0], OnSetScreenLayout, (void*)&kScreenLayout[0]);
+        MenuItem_ScreenLayout[1] = uiMenuAppendItem(submenu, "Vertical");
+        uiMenuItemOnClicked(MenuItem_ScreenLayout[1], OnSetScreenLayout, (void*)&kScreenLayout[1]);
+        MenuItem_ScreenLayout[2] = uiMenuAppendItem(submenu, "Horizontal");
+        uiMenuItemOnClicked(MenuItem_ScreenLayout[2], OnSetScreenLayout, (void*)&kScreenLayout[2]);
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+    {
+        uiMenu* submenu = uiNewMenu("Screen sizing");
+
+        MenuItem_ScreenSizing[0] = uiMenuAppendItem(submenu, "Even");
+        uiMenuItemOnClicked(MenuItem_ScreenSizing[0], OnSetScreenSizing, (void*)&kScreenSizing[0]);
+        MenuItem_ScreenSizing[1] = uiMenuAppendItem(submenu, "Emphasize top");
+        uiMenuItemOnClicked(MenuItem_ScreenSizing[1], OnSetScreenSizing, (void*)&kScreenSizing[1]);
+        MenuItem_ScreenSizing[2] = uiMenuAppendItem(submenu, "Emphasize bottom");
+        uiMenuItemOnClicked(MenuItem_ScreenSizing[2], OnSetScreenSizing, (void*)&kScreenSizing[2]);
+        MenuItem_ScreenSizing[3] = uiMenuAppendItem(submenu, "Auto");
+        uiMenuItemOnClicked(MenuItem_ScreenSizing[3], OnSetScreenSizing, (void*)&kScreenSizing[3]);
+
+        uiMenuAppendSubmenu(menu, submenu);
+    }
+
 
     int w = Config::WindowWidth;
     int h = Config::WindowHeight;
@@ -685,8 +1096,8 @@ int main(int argc, char** argv)
             strncpy(ROMPath, file, 1023);
             ROMPath[1023] = '\0';
 
-            NDS::LoadROM(ROMPath, Config::DirectBoot);
-            Run();
+            if (NDS::LoadROM(ROMPath, Config::DirectBoot))
+                Run();
         }
     }
 

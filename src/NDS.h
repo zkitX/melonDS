@@ -92,6 +92,8 @@ extern u32 IE[2];
 extern u32 IF[2];
 extern Timer Timers[8];
 
+extern u16 PowerControl9;
+
 extern u16 ExMemCnt[2];
 extern u8 ROMSeed0[2*8];
 extern u8 ROMSeed1[2*8];
@@ -106,7 +108,7 @@ void DeInit();
 void Reset();
 void Stop();
 
-void LoadROM(const char* path, bool direct);
+bool LoadROM(const char* path, bool direct);
 void LoadBIOS();
 void SetupDirectBoot();
 

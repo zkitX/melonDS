@@ -322,7 +322,11 @@ void Reset()
     memset(ROMSeed1, 0, 2*8);
 
     IME[0] = 0;
+    IE[0] = 0;
+    IF[0] = 0;
     IME[1] = 0;
+    IE[1] = 0;
+    IF[1] = 0;
 
     PostFlag9 = 0x00;
     PostFlag7 = 0x00;
@@ -357,9 +361,6 @@ void Reset()
     memset(SchedList, 0, sizeof(SchedList));
     SchedListMask = 0;
 
-    /*ARM9Cycles = 0;
-    ARM7Cycles = 0;
-    SchedCycles = 0;*/
     CurIterationCycles = 0;
     ARM7Offset = 0;
 
@@ -384,14 +385,18 @@ void Stop()
     SPU::Stop();
 }
 
-void LoadROM(const char* path, bool direct)
+bool LoadROM(const char* path, bool direct)
 {
-    Reset();
-
     if (NDSCart::LoadROM(path, direct))
+    {
         Running = true;
+        return true;
+    }
     else
+    {
         printf("Failed to load ROM %s\n", path);
+        return false;
+    }
 }
 
 void LoadBIOS()
@@ -423,6 +428,7 @@ void RunSystem(s32 cycles)
             continue;
 
         SchedList[i].WaitCycles -= cycles;
+
         if (SchedList[i].WaitCycles < 1)
         {
             SchedListMask &= ~(1<<i);
@@ -971,6 +977,7 @@ u8 ARM9Read8(u32 addr)
 
     case 0x08000000:
     case 0x09000000:
+        printf("GBA read8 %08X\n", addr);
         return 0xFF;
     }
 
@@ -1018,6 +1025,7 @@ u16 ARM9Read16(u32 addr)
 
     case 0x08000000:
     case 0x09000000:
+        printf("GBA read16 %08X\n", addr);
         return 0xFFFF;
     }
 
@@ -1065,6 +1073,7 @@ u32 ARM9Read32(u32 addr)
 
     case 0x08000000:
     case 0x09000000:
+        printf("GBA read32 %08X\n", addr);
         return 0xFFFFFFFF;
     }
 
@@ -1133,7 +1142,7 @@ void ARM9Write16(u32 addr, u16 val)
         return;
     }
 
-    //printf("unknown arm9 write16 %08X %04X\n", addr, val);
+    printf("unknown arm9 write16 %08X %04X\n", addr, val);
 }
 
 void ARM9Write32(u32 addr, u32 val)
@@ -1625,6 +1634,8 @@ u32 ARM9IORead32(u32 addr)
     case 0x040000E4: return DMA9Fill[1];
     case 0x040000E8: return DMA9Fill[2];
     case 0x040000EC: return DMA9Fill[3];
+
+    case 0x040000F4: return 0; // ???? Golden Sun Dark Dawn keeps reading this
 
     case 0x04000100: return TimerGetCounter(0) | (Timers[0].Cnt << 16);
     case 0x04000104: return TimerGetCounter(1) | (Timers[1].Cnt << 16);
