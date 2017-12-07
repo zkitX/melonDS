@@ -2,6 +2,7 @@
 #include "uipriv_unix.h"
 
 static GArray *menus = NULL;
+static guint nmenus = 0;
 static gboolean menusFinalized = FALSE;
 static gboolean hasQuit = FALSE;
 static gboolean hasPreferences = FALSE;
@@ -10,6 +11,8 @@ static gboolean hasAbout = FALSE;
 struct uiMenu {
 	char *name;
 	GArray *items;					// []*uiMenuItem
+	gboolean ischild;
+	guint id;
 };
 
 struct uiMenuItem {
@@ -21,6 +24,7 @@ struct uiMenuItem {
 	gboolean disabled;
 	gboolean checked;
 	GHashTable *windows;			// map[GtkMenuItem]*menuItemWindow
+	uiMenu *popupchild;
 };
 
 struct menuItemWindow {
@@ -35,6 +39,7 @@ enum {
 	typePreferences,
 	typeAbout,
 	typeSeparator,
+	typeSubmenu,
 };
 
 // we do NOT want programmatic updates to raise an ::activated signal
@@ -179,6 +184,33 @@ static uiMenuItem *newItem(uiMenu *m, int type, const char *name)
 	}
 
 	item->windows = g_hash_table_new(g_direct_hash, g_direct_equal);
+	item->popupchild = NULL;
+
+	return item;
+}
+
+uiMenuItem *uiMenuAppendSubmenu(uiMenu *m, uiMenu* child)
+{
+	uiMenuItem *item;
+
+	if (menusFinalized)
+		userbug("You cannot create a new menu item after menus have been finalized.");
+
+	item = uiNew(uiMenuItem);
+
+	g_array_append_val(m->items, item);
+
+	item->type = typeSubmenu;
+	item->name = child->name;
+
+	uiMenuItemOnClicked(item, defaultOnClicked, NULL);
+
+    // checkme
+	item->gtype = GTK_TYPE_MENU_ITEM;
+
+	item->windows = g_hash_table_new(g_direct_hash, g_direct_equal);
+	item->popupchild = child;
+	child->ischild = TRUE;
 
 	return item;
 }
@@ -237,9 +269,12 @@ uiMenu *uiNewMenu(const char *name)
 	m = uiNew(uiMenu);
 
 	g_array_append_val(menus, m);
+	m->id = nmenus;
+	nmenus++;
 
 	m->name = g_strdup(name);
 	m->items = g_array_new(FALSE, TRUE, sizeof (uiMenuItem *));
+	m->ischild = FALSE;
 
 	return m;
 }
@@ -260,10 +295,24 @@ static void appendMenuItem(GtkMenuShell *submenu, uiMenuItem *item, uiWindow *w)
 			singleSetChecked(GTK_CHECK_MENU_ITEM(menuitem), item->checked, signal);
 	}
 	gtk_menu_shell_append(submenu, menuitem);
+	
 	ww = uiNew(struct menuItemWindow);
 	ww->w = w;
 	ww->signal = signal;
 	g_hash_table_insert(item->windows, menuitem, ww);
+	
+	if (item->popupchild != NULL)
+	{
+	    int j;
+	    uiMenu* m;
+	    GtkWidget *submenu;
+	    
+	    m = item->popupchild;
+		submenu = gtk_menu_new();
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(menuitem), submenu);
+		for (j = 0; j < m->items->len; j++)
+			appendMenuItem(GTK_MENU_SHELL(submenu), g_array_index(m->items, uiMenuItem *, j), w);
+	}
 }
 
 GtkWidget *makeMenubar(uiWindow *w)
@@ -281,6 +330,7 @@ GtkWidget *makeMenubar(uiWindow *w)
 	if (menus != NULL)
 		for (i = 0; i < menus->len; i++) {
 			m = g_array_index(menus, uiMenu *, i);
+			if (m->ischild) continue;
 			menuitem = gtk_menu_item_new_with_label(m->name);
 			submenu = gtk_menu_new();
 			gtk_menu_item_set_submenu(GTK_MENU_ITEM(menuitem), submenu);
@@ -299,6 +349,8 @@ struct freeMenuItemData {
 	guint i;
 };
 
+static void freeMenu(GtkWidget *widget, gpointer data);
+
 static void freeMenuItem(GtkWidget *widget, gpointer data)
 {
 	struct freeMenuItemData *fmi = (struct freeMenuItemData *) data;
@@ -306,6 +358,8 @@ static void freeMenuItem(GtkWidget *widget, gpointer data)
 	struct menuItemWindow *w;
 
 	item = g_array_index(fmi->items, uiMenuItem *, fmi->i);
+	if (item->popupchild != NULL)
+	    freeMenu(widget, &item->popupchild->id);
 	w = (struct menuItemWindow *) g_hash_table_lookup(item->windows, widget);
 	if (g_hash_table_remove(item->windows, widget) == FALSE)
 		implbug("GtkMenuItem %p not in menu item's item/window map", widget);
@@ -339,28 +393,37 @@ void freeMenubar(GtkWidget *mb)
 	// no need to worry about destroying any widgets; destruction of the window they're in will do it for us
 }
 
+void _freeMenu(uiMenu* m)
+{
+    uiMenuItem *item;
+    guint j;
+
+    g_free(m->name);
+	for (j = 0; j < m->items->len; j++) {
+		item = g_array_index(m->items, uiMenuItem *, j);
+		if (item->popupchild != NULL) _freeMenu(item->popupchild);
+		if (g_hash_table_size(item->windows) != 0)
+			// TODO is this really a userbug()?
+			implbug("menu item %p (%s) still has uiWindows attached; did you forget to destroy some windows?", item, item->name);
+		if (item->type != typeSubmenu) g_free(item->name);
+		g_hash_table_destroy(item->windows);
+		uiFree(item);
+	}
+	g_array_free(m->items, TRUE);
+	uiFree(m);
+}
+
 void uninitMenus(void)
 {
 	uiMenu *m;
-	uiMenuItem *item;
-	guint i, j;
+	guint i;
 
 	if (menus == NULL)
 		return;
 	for (i = 0; i < menus->len; i++) {
 		m = g_array_index(menus, uiMenu *, i);
-		g_free(m->name);
-		for (j = 0; j < m->items->len; j++) {
-			item = g_array_index(m->items, uiMenuItem *, j);
-			if (g_hash_table_size(item->windows) != 0)
-				// TODO is this really a userbug()?
-				implbug("menu item %p (%s) still has uiWindows attached; did you forget to destroy some windows?", item, item->name);
-			g_free(item->name);
-			g_hash_table_destroy(item->windows);
-			uiFree(item);
-		}
-		g_array_free(m->items, TRUE);
-		uiFree(m);
+		if (m->ischild) continue;
+		_freeMenu(m);
 	}
 	g_array_free(menus, TRUE);
 }

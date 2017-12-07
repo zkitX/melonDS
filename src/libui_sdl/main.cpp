@@ -310,19 +310,12 @@ void OnAreaDraw(uiAreaHandler* handler, uiArea* area, uiAreaDrawParams* params)
 
     uiDrawSave(params->Context);
     uiDrawTransform(params->Context, &TopScreenTrans);
-    uiDrawBitmapDraw(params->Context, ScreenBitmap, &top, &TopScreenRect);
+    uiDrawBitmapDraw(params->Context, ScreenBitmap, &top, &TopScreenRect, Config::ScreenFilter==1);
     uiDrawRestore(params->Context);
 
-    /*uiDrawMatrix blirg;
-    uiDrawMatrixSetIdentity(&blirg);
-    uiDrawMatrixTranslate(&blirg, -BottomScreenRect.X, -BottomScreenRect.Y);
-    uiDrawMatrixRotate(&blirg, 0, 0, -M_PI/2.0f);//3.14);
-    uiDrawMatrixTranslate(&blirg, BottomScreenRect.X, BottomScreenRect.Y+BottomScreenRect.Height);
-    //uiDrawMatrixScale(&blirg, 128, 192, 2, 2);
-    uiDrawTransform(params->Context, &blirg);*/
     uiDrawSave(params->Context);
     uiDrawTransform(params->Context, &BottomScreenTrans);
-    uiDrawBitmapDraw(params->Context, ScreenBitmap, &bot, &BottomScreenRect);
+    uiDrawBitmapDraw(params->Context, ScreenBitmap, &bot, &BottomScreenRect, Config::ScreenFilter==1);
     uiDrawRestore(params->Context);
 }
 
@@ -422,6 +415,9 @@ int OnAreaKeyEvent(uiAreaHandler* handler, uiArea* area, uiAreaKeyEvent* evt)
         for (int i = 0; i < 12; i++)
             if (evt->Scancode == Config::KeyMapping[i])
                 KeyInputMask &= ~(1<<i);
+
+        //if (evt->Scancode == 0x58) // F12
+        //    NDS::debug(0);
     }
 
     return 1;
@@ -598,7 +594,7 @@ void SetupScreenRects(int width, int height)
 
     switch (ScreenRotation)
     {
-    case 1: // 90°
+    case 1: // 90Â°
         {
             uiDrawMatrixTranslate(&TopScreenTrans, -TopScreenRect.X, -TopScreenRect.Y);
             uiDrawMatrixRotate(&TopScreenTrans, 0, 0, M_PI/2.0f);
@@ -616,7 +612,7 @@ void SetupScreenRects(int width, int height)
         }
         break;
 
-    case 2: // 180°
+    case 2: // 180Â°
         {
             uiDrawMatrixTranslate(&TopScreenTrans, -TopScreenRect.X, -TopScreenRect.Y);
             uiDrawMatrixRotate(&TopScreenTrans, 0, 0, M_PI);
@@ -628,7 +624,7 @@ void SetupScreenRects(int width, int height)
         }
         break;
 
-    case 3: // 270°
+    case 3: // 270Â°
         {
             uiDrawMatrixTranslate(&TopScreenTrans, -TopScreenRect.X, -TopScreenRect.Y);
             uiDrawMatrixRotate(&TopScreenTrans, 0, 0, -M_PI/2.0f);
@@ -645,6 +641,20 @@ void SetupScreenRects(int width, int height)
             uiDrawMatrixTranslate(&BottomScreenTrans, BottomScreenRect.X, BottomScreenRect.Y+BottomScreenRect.Height);
         }
         break;
+    }
+}
+
+void SetMinSize(int w, int h)
+{
+    int cw, ch;
+    uiWindowContentSize(MainWindow, &cw, &ch);
+
+    uiControlSetMinSize(uiControl(MainDrawArea), w, h);
+    if ((cw < w) || (ch < h))
+    {
+        if (cw < w) cw = w;
+        if (ch < h) ch = h;
+        uiWindowSetContentSize(MainWindow, cw, ch);
     }
 }
 
@@ -828,6 +838,33 @@ void OnOpenInputConfig(uiMenuItem* item, uiWindow* window, void* blarg)
 }
 
 
+void EnsureProperMinSize()
+{
+    bool isHori = (ScreenRotation == 1 || ScreenRotation == 3);
+
+    if (ScreenLayout == 0) // natural
+    {
+        if (isHori)
+            SetMinSize(384+ScreenGap, 256);
+        else
+            SetMinSize(256, 384+ScreenGap);
+    }
+    else if (ScreenLayout == 1) // vertical
+    {
+        if (isHori)
+            SetMinSize(192, 512+ScreenGap);
+        else
+            SetMinSize(256, 384+ScreenGap);
+    }
+    else // horizontal
+    {
+        if (isHori)
+            SetMinSize(384+ScreenGap, 256);
+        else
+            SetMinSize(512+ScreenGap, 192);
+    }
+}
+
 void OnSetScreenRotation(uiMenuItem* item, uiWindow* window, void* param)
 {
     int rot = *(int*)param;
@@ -835,13 +872,29 @@ void OnSetScreenRotation(uiMenuItem* item, uiWindow* window, void* param)
     int oldrot = ScreenRotation;
     ScreenRotation = rot;
 
-    // TODO: adjust window size
-    if (rot == 1 || rot == 3)
-        uiControlSetMinSize(uiControl(MainDrawArea), 384, 256);
-    else
-        uiControlSetMinSize(uiControl(MainDrawArea), 256, 384);
+    int w, h;
+    uiWindowContentSize(window, &w, &h);
 
-    SetupScreenRects(Config::WindowWidth, Config::WindowHeight);
+    bool isHori = (rot == 1 || rot == 3);
+    bool wasHori = (oldrot == 1 || oldrot == 3);
+
+    EnsureProperMinSize();
+
+    if (ScreenLayout == 0) // natural
+    {
+        if (isHori ^ wasHori)
+        {
+            int blarg = h;
+            h = w;
+            w = blarg;
+
+            uiWindowSetContentSize(window, w, h);
+            Config::WindowWidth = w;
+            Config::WindowHeight = h;
+        }
+    }
+
+    SetupScreenRects(w, h);
 
     for (int i = 0; i < 4; i++)
         uiMenuItemSetChecked(MenuItem_ScreenRot[i], i==ScreenRotation);
@@ -851,31 +904,26 @@ void OnSetScreenGap(uiMenuItem* item, uiWindow* window, void* param)
 {
     int gap = *(int*)param;
 
-    int oldgap = ScreenGap;
+    //int oldgap = ScreenGap;
     ScreenGap = gap;
 
-    // resize window as needed
-    // TODO: adapt to horizontal modes
-    // TODO: always resize window? except if it's maximized
-    int w, h;
-    uiWindowContentSize(window, &w, &h);
-    {
-        h -= gap;
-        if (h < 384)
-        {
-            h = 384 + gap;
-            uiWindowSetContentSize(window, w, h);
-        }
-    }
-
+    EnsureProperMinSize();
     SetupScreenRects(Config::WindowWidth, Config::WindowHeight);
+
+    for (int i = 0; i < 6; i++)
+        uiMenuItemSetChecked(MenuItem_ScreenGap[i], kScreenGap[i]==ScreenGap);
 }
 
 void OnSetScreenLayout(uiMenuItem* item, uiWindow* window, void* param)
 {
     int layout = *(int*)param;
     ScreenLayout = layout;
-    // TODO trigger resize
+
+    EnsureProperMinSize();
+    SetupScreenRects(Config::WindowWidth, Config::WindowHeight);
+
+    for (int i = 0; i < 3; i++)
+        uiMenuItemSetChecked(MenuItem_ScreenLayout[i], i==ScreenLayout);
 }
 
 void OnSetScreenSizing(uiMenuItem* item, uiWindow* window, void* param)
@@ -884,6 +932,16 @@ void OnSetScreenSizing(uiMenuItem* item, uiWindow* window, void* param)
     ScreenSizing = sizing;
 
     SetupScreenRects(Config::WindowWidth, Config::WindowHeight);
+
+    for (int i = 0; i < 4; i++)
+        uiMenuItemSetChecked(MenuItem_ScreenSizing[i], i==ScreenSizing);
+}
+
+void OnSetScreenFiltering(uiMenuItem* item, uiWindow* window, void* blarg)
+{
+    int chk = uiMenuItemChecked(item);
+    if (chk != 0) Config::ScreenFilter = 1;
+    else          Config::ScreenFilter = 0;
 }
 
 
@@ -1004,7 +1062,7 @@ int main(int argc, char** argv)
         {
             char name[32];
             sprintf(name, "%d", kScreenRot[i]*90);
-            MenuItem_ScreenRot[i] = uiMenuAppendItem(submenu, name);
+            MenuItem_ScreenRot[i] = uiMenuAppendCheckItem(submenu, name);
             uiMenuItemOnClicked(MenuItem_ScreenRot[i], OnSetScreenRotation, (void*)&kScreenRot[i]);
         }
 
@@ -1018,7 +1076,7 @@ int main(int argc, char** argv)
         {
             char name[32];
             sprintf(name, "%d pixels", kScreenGap[i]);
-            MenuItem_ScreenGap[i] = uiMenuAppendItem(submenu, name);
+            MenuItem_ScreenGap[i] = uiMenuAppendCheckItem(submenu, name);
             uiMenuItemOnClicked(MenuItem_ScreenGap[i], OnSetScreenGap, (void*)&kScreenGap[i]);
         }
 
@@ -1027,11 +1085,11 @@ int main(int argc, char** argv)
     {
         uiMenu* submenu = uiNewMenu("Screen layout");
 
-        MenuItem_ScreenLayout[0] = uiMenuAppendItem(submenu, "Natural");
+        MenuItem_ScreenLayout[0] = uiMenuAppendCheckItem(submenu, "Natural");
         uiMenuItemOnClicked(MenuItem_ScreenLayout[0], OnSetScreenLayout, (void*)&kScreenLayout[0]);
-        MenuItem_ScreenLayout[1] = uiMenuAppendItem(submenu, "Vertical");
+        MenuItem_ScreenLayout[1] = uiMenuAppendCheckItem(submenu, "Vertical");
         uiMenuItemOnClicked(MenuItem_ScreenLayout[1], OnSetScreenLayout, (void*)&kScreenLayout[1]);
-        MenuItem_ScreenLayout[2] = uiMenuAppendItem(submenu, "Horizontal");
+        MenuItem_ScreenLayout[2] = uiMenuAppendCheckItem(submenu, "Horizontal");
         uiMenuItemOnClicked(MenuItem_ScreenLayout[2], OnSetScreenLayout, (void*)&kScreenLayout[2]);
 
         uiMenuAppendSubmenu(menu, submenu);
@@ -1039,23 +1097,31 @@ int main(int argc, char** argv)
     {
         uiMenu* submenu = uiNewMenu("Screen sizing");
 
-        MenuItem_ScreenSizing[0] = uiMenuAppendItem(submenu, "Even");
+        MenuItem_ScreenSizing[0] = uiMenuAppendCheckItem(submenu, "Even");
         uiMenuItemOnClicked(MenuItem_ScreenSizing[0], OnSetScreenSizing, (void*)&kScreenSizing[0]);
-        MenuItem_ScreenSizing[1] = uiMenuAppendItem(submenu, "Emphasize top");
+        MenuItem_ScreenSizing[1] = uiMenuAppendCheckItem(submenu, "Emphasize top");
         uiMenuItemOnClicked(MenuItem_ScreenSizing[1], OnSetScreenSizing, (void*)&kScreenSizing[1]);
-        MenuItem_ScreenSizing[2] = uiMenuAppendItem(submenu, "Emphasize bottom");
+        MenuItem_ScreenSizing[2] = uiMenuAppendCheckItem(submenu, "Emphasize bottom");
         uiMenuItemOnClicked(MenuItem_ScreenSizing[2], OnSetScreenSizing, (void*)&kScreenSizing[2]);
-        MenuItem_ScreenSizing[3] = uiMenuAppendItem(submenu, "Auto");
+        MenuItem_ScreenSizing[3] = uiMenuAppendCheckItem(submenu, "Auto");
         uiMenuItemOnClicked(MenuItem_ScreenSizing[3], OnSetScreenSizing, (void*)&kScreenSizing[3]);
 
         uiMenuAppendSubmenu(menu, submenu);
     }
+    menuitem = uiMenuAppendCheckItem(menu, "Screen filtering");
+    uiMenuItemOnClicked(menuitem, OnSetScreenFiltering, NULL);
+    uiMenuItemSetChecked(menuitem, Config::ScreenFilter==1);
+
+    uiMenuItemSetChecked(MenuItem_ScreenRot[ScreenRotation], 1);
+    uiMenuItemSetChecked(MenuItem_ScreenGap[ScreenGap], 1);
+    uiMenuItemSetChecked(MenuItem_ScreenLayout[ScreenLayout], 1);
+    uiMenuItemSetChecked(MenuItem_ScreenSizing[ScreenSizing], 1);
 
 
     int w = Config::WindowWidth;
     int h = Config::WindowHeight;
-    if (w < 256) w = 256;
-    if (h < 384) h = 384;
+    //if (w < 256) w = 256;
+    //if (h < 384) h = 384;
 
     MainWindow = uiNewWindow("melonDS " MELONDS_VERSION, w, h, 1, 1);
     uiWindowOnClosing(MainWindow, OnCloseWindow, NULL);
@@ -1081,6 +1147,21 @@ int main(int argc, char** argv)
     MainDrawArea = uiNewArea(&areahandler);
     uiWindowSetChild(MainWindow, uiControl(MainDrawArea));
     uiControlSetMinSize(uiControl(MainDrawArea), 256, 384);
+    uiAreaSetBackgroundColor(MainDrawArea, 0, 0, 0); // TODO: make configurable?
+
+    ScreenRotation = Config::ScreenRotation;
+    ScreenGap = Config::ScreenGap;
+    ScreenLayout = Config::ScreenLayout;
+    ScreenSizing = Config::ScreenSizing;
+
+#define SANITIZE(var, min, max)  if ((var < min) || (var > max)) var = 0;
+    SANITIZE(ScreenRotation, 0, 3);
+    SANITIZE(ScreenGap, 0, 5);
+    SANITIZE(ScreenLayout, 0, 2);
+    SANITIZE(ScreenSizing, 0, 3);
+#undef SANITIZE
+
+    OnSetScreenRotation(MenuItem_ScreenRot[ScreenRotation], MainWindow, (void*)&kScreenRot[ScreenRotation]);
 
     EmuRunning = 2;
     RunningSomething = false;
@@ -1107,6 +1188,11 @@ int main(int argc, char** argv)
 
     EmuRunning = 0;
     SDL_WaitThread(EmuThread, NULL);
+
+    Config::ScreenRotation = ScreenRotation;
+    Config::ScreenGap = ScreenGap;
+    Config::ScreenLayout = ScreenLayout;
+    Config::ScreenSizing = ScreenSizing;
 
     Config::Save();
 
