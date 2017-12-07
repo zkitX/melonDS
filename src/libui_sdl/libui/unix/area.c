@@ -39,6 +39,8 @@ struct uiArea {
 	GtkWidget *areaWidget;
 	GtkDrawingArea *drawingArea;
 	areaWidget *area;
+	
+	int bgR, bgG, bgB;
 
 	uiAreaHandler *ah;
 
@@ -132,6 +134,12 @@ static gboolean areaWidget_draw(GtkWidget *w, cairo_t *cr)
 	dp.ClipY = clipY0;
 	dp.ClipWidth = clipX1 - clipX0;
 	dp.ClipHeight = clipY1 - clipY0;
+	
+	if (a->bgR != -1)
+	{
+	    cairo_set_source_rgb(cr, a->bgR/255.0, a->bgG/255.0, a->bgB/255.0);
+	    cairo_paint(cr);
+	}
 
 	// no need to save or restore the graphics state to reset transformations; GTK+ does that for us
 	(*(a->ah->Draw))(a->ah, a, &dp);
@@ -578,6 +586,13 @@ static void areaWidget_class_init(areaWidgetClass *class)
 
 uiUnixControlAllDefaults(uiArea)
 
+void uiAreaSetBackgroundColor(uiArea *a, int r, int g, int b)
+{
+    a->bgR = r;
+    a->bgG = g;
+    a->bgB = b;
+}
+
 void uiAreaSetSize(uiArea *a, int width, int height)
 {
 	if (!a->scrolling)
@@ -695,6 +710,8 @@ uiArea *uiNewArea(uiAreaHandler *ah)
 	a->area = areaWidget(a->areaWidget);
 
 	a->widget = a->areaWidget;
+	
+	uiAreaSetBackgroundColor(a, -1, -1, -1);
 
 	return a;
 }
@@ -721,6 +738,8 @@ uiArea *uiNewScrollingArea(uiAreaHandler *ah, int width, int height)
 	a->area = areaWidget(a->areaWidget);
 
 	a->widget = a->swidget;
+	
+	uiAreaSetBackgroundColor(a, -1, -1, -1);
 
 	gtk_container_add(a->scontainer, a->areaWidget);
 	// and make the area visible; only the scrolled window's visibility is controlled by libui
