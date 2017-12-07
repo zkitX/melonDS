@@ -19,6 +19,14 @@
 #ifndef MELON_FOPEN_H
 #define MELON_FOPEN_H
 
+#ifdef __LIBRETRO__
+
+#include <streams/file_stream_transforms.h>
+
+#define melon_fopen rfopen
+
+#else
+
 #ifdef __WIN32__
 
 #include <windows.h>
@@ -46,6 +54,8 @@ static FILE* melon_fopen(const char* path, const char* mode)
 #else
 
 #define melon_fopen fopen
+
+#endif
 
 #endif
 
