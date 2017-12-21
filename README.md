@@ -1,3 +1,6 @@
+[![Build Status](https://travis-ci.org/libretro/melonDS.svg?branch=master)](https://travis-ci.org/libretro/melonDS)
+[![Build status](https://ci.appveyor.com/api/projects/status/alninic8dnrw8cph/branch/master?svg=true)](https://ci.appveyor.com/project/bparker06/melonds/branch/master)
+
 # melonDS
 
 DS emulator, sorta
