@@ -127,6 +127,10 @@ else ifeq ($(platform), vita)
    AR = arm-vita-eabi-ar
    CXXFLAGS += -Wl,-q -Wall -O3 -fno-short-enums -fno-optimize-sibling-calls
 	STATIC_LINKING = 1
+else ifeq ($(platform), switch)
+	TARGET := $(TARGET_NAME)_switch.a
+	include $(DEVKITPRO)/libnx/switch_rules
+	STATIC_LINKING = 1
 
 # Windows MSVC 2017 all architectures
 else ifneq (,$(findstring windows_msvc2017,$(platform)))
